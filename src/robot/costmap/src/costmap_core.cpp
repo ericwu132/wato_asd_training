@@ -1,8 +1,5 @@
-#include "costmap_core.hpp"
+#include "costmap_core.hpp" 
 
-namespace robot
-{
-
-CostmapCore::CostmapCore(const rclcpp::Logger& logger) : logger_(logger) {}
-
+namespace robot { 
+CostmapCore::CostmapCore(const rclcpp::Logger& logger) : logger_(logger) {} 
 }
