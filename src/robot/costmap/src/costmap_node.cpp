@@ -51,33 +51,46 @@ static void inflate_obstacles(vector<int8_t>& costmap, double inflation_radius_m
   for (int y = 0; y < HEIGHT; y++) { 
     for (int x = 0; x < WIDTH; x++) {
       const int idx = y * WIDTH + x;
-      //no point to inflate 100 to 100
+      
+
+      //if it ISN'T an obstacle, it just goes to the next cell (need to find an obstacle to inflate)
       if (original[idx] != 100) 
       {
+        //otherwise continue
         continue;
       }  
 
-      //bounds
-      const int x0 = max(0, x - radius_cells);
-      const int x1 = min(WIDTH - 1, x + radius_cells);
-      const int y0 = max(0, y - radius_cells);
-      const int y1 = min(HEIGHT - 1, y + radius_cells);
+      //bounds, makes sure you don't go outside of the valid coordinates
+      const int xlower = max(0, x - radius_cells); //smallest x value
+      const int xupper = min(WIDTH - 1, x + radius_cells); //largest x value
+      const int ylower = max(0, y - radius_cells); //smallest y value
+      const int yupper = min(HEIGHT - 1, y + radius_cells); //largest y value
 
-      for (int ny = y0; ny <= y1; ny++) {
-        for (int nx = x0; nx <= x1; nx++) {
-          const int nidx = ny * WIDTH + nx;
 
-          // Don't reduce obstacle cells
-          if (costmap[nidx] == 100) continue;
+      //now we have found a cell that is an obstacle, need to inflate around it
 
+      
+      for (int ny = ylower; ny <= yupper; ny++) { //starting in most bottom, while less than max top bound, increment
+        for (int nx = xlower; nx <= xupper; nx++) { //starting in leftmost bound, while less than rightmost bound, increment
+          const int nidx = ny * WIDTH + nx; //current index being looked at
+
+          //want to keep obstacles as obstacles
+          if (costmap[nidx] == 100)
+          {
+            continue;
+          }
+          //these variables calculate the distance between the guaranteed object and the cell being looked at
           const int dx = nx - x;
           const int dy = ny - y;
 
-          // Euclidean distance in meters
+          //
           const double dist_m = sqrt(static_cast<double>(dx * dx + dy * dy)) * RESOLUTION;
 
-          if (dist_m > inflation_radius_m) continue;
-
+          if (dist_m > inflation_radius_m)
+          {
+            continue;
+          }
+          
           // cost = max_cost * (1 - dist / radius)
           const double raw = static_cast<double>(max_cost) * (1.0 - (dist_m / inflation_radius_m));
           const int8_t cost = static_cast<int8_t>(round(max(0.0, raw)));
@@ -125,13 +138,13 @@ void CostmapNode::topic_callback(const sensor_msgs::msg::LaserScan::SharedPtr ms
     grid_[idx] = 100; // occupied
   }
 
-  inflate_obstacles(grid_, 1.0, 80);
+  inflate_obstacles(grid_, 1.4, 80);
 
 
   // 3) Publish OccupancyGrid
   nav_msgs::msg::OccupancyGrid out;
   out.header.stamp = this->now();
-  out.header.frame_id = "sim_world";   // IMPORTANT: change if your robot frame is different
+  out.header.frame_id = "robot/chassis/lidar";   // IMPORTANT: change if your robot frame is different
 
   out.info.resolution = RESOLUTION;
   out.info.width = WIDTH;
