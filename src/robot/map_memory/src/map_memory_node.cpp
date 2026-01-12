@@ -1,8 +1,11 @@
 #include "map_memory_node.hpp"
 #include "nav_msgs/msg/odometry.hpp"
+#include "nav_msgs/msg/occupancy_grid.hpp"
 #include <cmath> //for sqrt, pow
 
+#include <functional>
 
+using std::placeholders::_1;
 using namespace std;
 //publishers and subscribers
 MapMemoryNode::MapMemoryNode() : Node("map_memory"), map_memory_(robot::MapMemoryCore(this->get_logger())) 
@@ -56,13 +59,13 @@ void MapMemoryNode::odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg)
   double dx = current_x - last_pose_x_;
   double dy = current_y - last_pose_y_;
 
-  double distance = sqrt(pow(dx, 2) + pow(dy, 2))
+  double distance = sqrt(pow(dx, 2) + pow(dy, 2));
 
   if (distance >= 1.5)
   {
     map_memory_.update_pose(dx, dy);
     last_pose_x_ = current_x;
-    last_pose_y = current_y;
+    last_pose_y_ = current_y;
   }
 }
 
