@@ -35,6 +35,7 @@ MapMemoryNode::MapMemoryNode()
   );
 }
 
+
 void MapMemoryNode::costmapCallback(const nav_msgs::msg::OccupancyGrid::SharedPtr msg)
 {
   latest_costmap_ = *msg;
