@@ -138,7 +138,7 @@ void CostmapNode::topic_callback(const sensor_msgs::msg::LaserScan::SharedPtr ms
     grid_[idx] = 100; // occupied
   }
 
-  inflate_obstacles(grid_, 1.4, 80);
+  inflate_obstacles(grid_, 1.3, 99);
 
 
   // 3) Publish OccupancyGrid

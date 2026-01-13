@@ -11,10 +11,10 @@ namespace robot
 
 ControlCore::ControlCore(const rclcpp::Logger& logger)
 : logger_(logger),
-  lookahead_distance_(1.5),
+  lookahead_distance_(2),
   goal_tolerance_(0.15),
   linear_speed_(0.5),
-  max_angular_speed_(3),
+  max_angular_speed_(1.8),
   have_path_(false),
   have_odom_(false)
 {

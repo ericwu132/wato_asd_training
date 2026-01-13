@@ -11,7 +11,7 @@ ControlNode::ControlNode()
   this->declare_parameter<double>("lookahead_distance", 1.0);
   this->declare_parameter<double>("goal_tolerance", 0.15);
   this->declare_parameter<double>("linear_speed", 1.7);
-  this->declare_parameter<double>("max_angular_speed", 3);
+  this->declare_parameter<double>("max_angular_speed", 2);
   this->declare_parameter<int>("control_hz", 10);
 
   const double lookahead = this->get_parameter("lookahead_distance").as_double();

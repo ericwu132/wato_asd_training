@@ -97,7 +97,7 @@ private:
 
   bool isRobotInInflatedCell();
 
-  int OBSTACLE_THRESHOLD = 15;
+  int OBSTACLE_THRESHOLD = 50;
   int INFLATED_MIN_COST = 1;
 
   std::unordered_map<CellIndex, AStarNode, CellIndexHash> node_registry_;

@@ -282,7 +282,11 @@ void PlannerNode::publishEmptyPath()
 
 double PlannerNode::movementCost(const CellIndex& current, const CellIndex& neighbor)
 {
-  return (std::abs(current.x - neighbor.x) == 1 && std::abs(current.y - neighbor.y) == 1) ? std::sqrt(2.0) : 1.0;
+  const double base = (std::abs(current.x - neighbor.x) == 1 && std::abs(current.y - neighbor.y) == 1) ? std::sqrt(2.0) : 1.0;
+  const double cost = cellCost(neighbor);
+  const double normalized = std::min(1.0, std::max(0.0, cost / static_cast<double>(OBSTACLE_THRESHOLD)));
+  const double penalty = normalized * 0.5;
+  return base + penalty;
 }
 
 int main(int argc, char** argv)
@@ -292,3 +296,4 @@ int main(int argc, char** argv)
   rclcpp::shutdown();
   return 0;
 }
+
