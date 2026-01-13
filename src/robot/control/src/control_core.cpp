@@ -11,10 +11,10 @@ namespace robot
 
 ControlCore::ControlCore(const rclcpp::Logger& logger)
 : logger_(logger),
-  lookahead_distance_(1.0),
+  lookahead_distance_(1.5),
   goal_tolerance_(0.15),
   linear_speed_(0.5),
-  max_angular_speed_(1.5),
+  max_angular_speed_(3),
   have_path_(false),
   have_odom_(false)
 {
@@ -113,30 +113,15 @@ std::optional<size_t> ControlCore::findNearestIndex(double rx, double ry) const
 
 std::optional<size_t> ControlCore::findLookaheadIndex(double rx, double ry, size_t start_idx) const
 {
-  (void)rx;
-  (void)ry;
-
   if (poses_.empty()) return std::nullopt;
   if (start_idx >= poses_.size()) start_idx = poses_.size() - 1;
-  if (poses_.size() == 1) return 0;
 
-  double accum = 0.0;
-
-  size_t i = start_idx;
-  double prev_x = poses_[i].pose.position.x;
-  double prev_y = poses_[i].pose.position.y;
-
-  for (size_t k = i + 1; k < poses_.size(); ++k)
+  for (size_t i = start_idx; i < poses_.size(); ++i)
   {
-    const double cx = poses_[k].pose.position.x;
-    const double cy = poses_[k].pose.position.y;
-
-    accum += distance2D(prev_x, prev_y, cx, cy);
-
-    if (accum >= lookahead_distance_) return k;
-
-    prev_x = cx;
-    prev_y = cy;
+    const double px = poses_[i].pose.position.x;
+    const double py = poses_[i].pose.position.y;
+    const double d = distance2D(rx, ry, px, py);
+    if (d >= lookahead_distance_) return i;
   }
 
   return poses_.size() - 1;
@@ -183,29 +168,15 @@ std::optional<geometry_msgs::msg::Twist> ControlCore::step()
   const double curvature = (2.0 * std::sin(alpha)) / L;
 
   double v = linear_speed_;
-
-  const double heading_scale = std::max(0.0, std::cos(alpha));
-  v *= heading_scale;
-
   if (dist_to_goal < 1.5 * lookahead_distance_)
   {
     const double scale = std::max(0.1, dist_to_goal / (1.5 * lookahead_distance_));
     v *= scale;
   }
 
-  double w;
-
-  if (std::abs(alpha) > 1.2)
-  {
-    v = 0.0;
-    w = (alpha > 0.0) ? max_angular_speed_ : -max_angular_speed_;
-  }
-  else
-  {
-    w = v * curvature;
-    if (w > max_angular_speed_) w = max_angular_speed_;
-    if (w < -max_angular_speed_) w = -max_angular_speed_;
-  }
+  double w = v * curvature;
+  if (w > max_angular_speed_) w = max_angular_speed_;
+  if (w < -max_angular_speed_) w = -max_angular_speed_;
 
   geometry_msgs::msg::Twist cmd;
   cmd.linear.x = v;

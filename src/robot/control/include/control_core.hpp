@@ -2,7 +2,6 @@
 #define CONTROL_CORE_HPP_
 
 #include <optional>
-#include <string>
 #include <vector>
 
 #include "rclcpp/rclcpp.hpp"
@@ -51,6 +50,7 @@ private:
 
   std::string frame_id_;
   std::vector<geometry_msgs::msg::PoseStamped> poses_;
+
   nav_msgs::msg::Odometry odom_;
 };
 

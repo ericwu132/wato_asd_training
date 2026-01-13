@@ -1,3 +1,4 @@
+// planner_node.cpp
 #include "planner_node.hpp"
 
 #include <algorithm>
@@ -42,7 +43,11 @@ void PlannerNode::handleMapUpdate(const nav_msgs::msg::OccupancyGrid::SharedPtr 
     }
   }
 
-  if (state_ == PlannerState::PLANNING_PATH) computePath();
+  if (state_ == PlannerState::PLANNING_PATH)
+  {
+    if (isRobotInInflatedCell() && has_last_path_) return;
+    computePath();
+  }
 }
 
 void PlannerNode::handleGoalUpdate(const geometry_msgs::msg::PointStamped::SharedPtr msg)
@@ -50,6 +55,8 @@ void PlannerNode::handleGoalUpdate(const geometry_msgs::msg::PointStamped::Share
   goal_ = *msg;
   goal_set_ = true;
   state_ = PlannerState::PLANNING_PATH;
+
+  if (isRobotInInflatedCell() && has_last_path_) return;
   computePath();
 }
 
@@ -70,6 +77,8 @@ void PlannerNode::onTimerEvent()
     return;
   }
 
+  if (isRobotInInflatedCell() && has_last_path_) return;
+
   computePath();
 }
 
@@ -80,9 +89,27 @@ bool PlannerNode::hasGoalBeenReached()
   return std::sqrt(dx * dx + dy * dy) < 0.2;
 }
 
+bool PlannerNode::isRobotInInflatedCell()
+{
+  if (current_map_.data.empty()) return false;
+
+  CellIndex start = mapToCell(robot_pose_.position);
+
+  if (start.x < 0 || start.x >= static_cast<int>(current_map_.info.width) ||
+      start.y < 0 || start.y >= static_cast<int>(current_map_.info.height))
+  {
+    return false;
+  }
+
+  double cost = cellCost(start);
+  return (cost >= static_cast<double>(INFLATED_MIN_COST) && cost < static_cast<double>(OBSTACLE_THRESHOLD));
+}
+
 void PlannerNode::computePath()
 {
   if (!goal_set_ || current_map_.data.empty()) return;
+
+  if (isRobotInInflatedCell() && has_last_path_) return;
 
   std::priority_queue<AStarNode, std::vector<AStarNode>, CompareF> open_list;
   std::unordered_set<CellIndex, CellIndexHash> closed_list;
@@ -91,6 +118,21 @@ void PlannerNode::computePath()
 
   CellIndex start = mapToCell(robot_pose_.position);
   CellIndex target = mapToCell(goal_.point);
+
+  if (start.x < 0 || start.x >= static_cast<int>(current_map_.info.width) ||
+      start.y < 0 || start.y >= static_cast<int>(current_map_.info.height) ||
+      target.x < 0 || target.x >= static_cast<int>(current_map_.info.width) ||
+      target.y < 0 || target.y >= static_cast<int>(current_map_.info.height))
+  {
+    publishEmptyPath();
+    return;
+  }
+
+  if (cellCost(start) >= OBSTACLE_THRESHOLD || cellCost(target) >= OBSTACLE_THRESHOLD)
+  {
+    publishEmptyPath();
+    return;
+  }
 
   double dx = static_cast<double>(start.x - target.x);
   double dy = static_cast<double>(start.y - target.y);
@@ -222,6 +264,9 @@ void PlannerNode::publishPath(const std::vector<geometry_msgs::msg::PoseStamped>
   msg.header.frame_id = FRAME_ID;
   msg.poses = path;
   path_publisher_->publish(msg);
+
+  last_path_ = path;
+  has_last_path_ = true;
 }
 
 void PlannerNode::publishEmptyPath()
@@ -230,6 +275,9 @@ void PlannerNode::publishEmptyPath()
   empty_path.header.stamp = this->get_clock()->now();
   empty_path.header.frame_id = FRAME_ID;
   path_publisher_->publish(empty_path);
+
+  last_path_.clear();
+  has_last_path_ = false;
 }
 
 double PlannerNode::movementCost(const CellIndex& current, const CellIndex& neighbor)

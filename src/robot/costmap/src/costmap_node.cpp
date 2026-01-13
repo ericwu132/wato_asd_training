@@ -144,7 +144,7 @@ void CostmapNode::topic_callback(const sensor_msgs::msg::LaserScan::SharedPtr ms
   // 3) Publish OccupancyGrid
   nav_msgs::msg::OccupancyGrid out;
   out.header.stamp = this->now();
-  out.header.frame_id = "robot/chassis/lidar";   // IMPORTANT: change if your robot frame is different
+  out.header.frame_id = "robot/chassis/lidar";  
 
   out.info.resolution = RESOLUTION;
   out.info.width = WIDTH;
@@ -166,24 +166,8 @@ void CostmapNode::topic_callback(const sensor_msgs::msg::LaserScan::SharedPtr ms
   int occupied = 0;
   for (auto v : grid_) if (v == 100) occupied++;
 
-  RCLCPP_INFO_THROTTLE(
-    this->get_logger(),
-    *this->get_clock(),
-    500,
-    "Published /costmap | occupied=%d",
-    occupied
-  );
-
   int inflated = 0;
 for (auto v : grid_) if (v > 0) inflated++;
-
-RCLCPP_INFO_THROTTLE(
-  this->get_logger(),
-  *this->get_clock(),
-  500,
-  "cells with cost > 0: %d",
-  inflated
-);
 
 }
 

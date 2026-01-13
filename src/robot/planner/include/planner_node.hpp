@@ -1,3 +1,4 @@
+// planner_node.hpp
 #ifndef PLANNER_NODE_HPP_
 #define PLANNER_NODE_HPP_
 
@@ -6,6 +7,7 @@
 #include "nav_msgs/msg/path.hpp"
 #include "nav_msgs/msg/odometry.hpp"
 #include "geometry_msgs/msg/point_stamped.hpp"
+#include "geometry_msgs/msg/pose_stamped.hpp"
 #include "planner_core.hpp"
 
 #include <vector>
@@ -27,7 +29,9 @@ struct CellIndex {
 };
 
 struct CellIndexHash {
-  std::size_t operator()(const CellIndex &idx) const { return std::hash<int>()(idx.x) ^ (std::hash<int>()(idx.y) << 1); }
+  std::size_t operator()(const CellIndex &idx) const {
+    return std::hash<int>()(idx.x) ^ (std::hash<int>()(idx.y) << 1);
+  }
 };
 
 struct AStarNode {
@@ -44,7 +48,9 @@ struct AStarNode {
   : index(idx), f_score(f), g_score(g), h_score(h), parent(p) {}
 };
 
-struct CompareF { bool operator()(const AStarNode &a, const AStarNode &b) { return a.f_score > b.f_score; } };
+struct CompareF {
+  bool operator()(const AStarNode &a, const AStarNode &b) { return a.f_score > b.f_score; }
+};
 
 enum class PlannerState {
   AWAITING_GOAL,
@@ -89,8 +95,15 @@ private:
   std::vector<geometry_msgs::msg::PoseStamped> retracePath(const AStarNode &goal_node);
   double cellCost(const CellIndex &cell);
 
+  bool isRobotInInflatedCell();
+
   int OBSTACLE_THRESHOLD = 15;
+  int INFLATED_MIN_COST = 1;
+
   std::unordered_map<CellIndex, AStarNode, CellIndexHash> node_registry_;
+
+  std::vector<geometry_msgs::msg::PoseStamped> last_path_;
+  bool has_last_path_ = false;
 };
 
 #endif
