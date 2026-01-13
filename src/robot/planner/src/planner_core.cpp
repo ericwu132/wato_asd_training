@@ -63,8 +63,9 @@ static inline bool isBlocked(const nav_msgs::msg::OccupancyGrid& map, int x, int
   const int idx = flatIndex(x, y, w);
   const int8_t v = map.data[idx];
   if (v < 0) return true;
-  return v >= 50;
+  return v >= 99;
 }
+
 
 static inline double heuristic(const CellIndex& a, const CellIndex& b)
 {
@@ -222,13 +223,13 @@ std::optional<nav_msgs::msg::Path> PlannerCore::plan(
   std::reverse(cells.begin(), cells.end());
 
   nav_msgs::msg::Path path;
-  path.header.frame_id = map.header.frame_id;
+  path.header.frame_id = "map";
 
   path.poses.reserve(cells.size());
   for (const auto& c : cells)
   {
     geometry_msgs::msg::PoseStamped ps;
-    ps.header.frame_id = map.header.frame_id;
+    ps.header.frame_id = "map";
 
     double wx, wy;
     cellToWorldCenter(map, c, wx, wy);

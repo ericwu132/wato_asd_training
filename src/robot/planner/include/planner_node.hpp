@@ -1,64 +1,96 @@
 #ifndef PLANNER_NODE_HPP_
 #define PLANNER_NODE_HPP_
 
-#include <optional>
-
 #include "rclcpp/rclcpp.hpp"
 #include "nav_msgs/msg/occupancy_grid.hpp"
-#include "nav_msgs/msg/odometry.hpp"
 #include "nav_msgs/msg/path.hpp"
+#include "nav_msgs/msg/odometry.hpp"
 #include "geometry_msgs/msg/point_stamped.hpp"
-
 #include "planner_core.hpp"
 
-class PlannerNode : public rclcpp::Node
-{
+#include <vector>
+#include <queue>
+#include <cmath>
+#include <unordered_map>
+#include <unordered_set>
+#include <cstddef>
+
+struct CellIndex {
+  int x;
+  int y;
+
+  CellIndex(int xx, int yy) : x(xx), y(yy) {}
+  CellIndex() : x(0), y(0) {}
+
+  bool operator==(const CellIndex &other) const { return (x == other.x && y == other.y); }
+  bool operator!=(const CellIndex &other) const { return !(*this == other); }
+};
+
+struct CellIndexHash {
+  std::size_t operator()(const CellIndex &idx) const { return std::hash<int>()(idx.x) ^ (std::hash<int>()(idx.y) << 1); }
+};
+
+struct AStarNode {
+  CellIndex index;
+  double f_score;
+  double g_score;
+  double h_score;
+  CellIndex parent;
+
+  AStarNode()
+  : index(0, 0), f_score(INFINITY), g_score(INFINITY), h_score(INFINITY), parent(0, 0) {}
+
+  AStarNode(CellIndex idx, double f, double g, double h, CellIndex p)
+  : index(idx), f_score(f), g_score(g), h_score(h), parent(p) {}
+};
+
+struct CompareF { bool operator()(const AStarNode &a, const AStarNode &b) { return a.f_score > b.f_score; } };
+
+enum class PlannerState {
+  AWAITING_GOAL,
+  PLANNING_PATH
+};
+
+class PlannerNode : public rclcpp::Node {
+
 public:
   PlannerNode();
+  void handleMapUpdate(const nav_msgs::msg::OccupancyGrid::SharedPtr msg);
+  void handleGoalUpdate(const geometry_msgs::msg::PointStamped::SharedPtr msg);
+  void handleOdometryUpdate(const nav_msgs::msg::Odometry::SharedPtr msg);
+  void onTimerEvent();
+  bool hasGoalBeenReached();
+  void computePath();
+  void publishPath(const std::vector<geometry_msgs::msg::PoseStamped> &path);
+  void publishEmptyPath();
+  double movementCost(const CellIndex &current, const CellIndex &neighbor);
+  geometry_msgs::msg::PoseStamped createPose(const CellIndex &index);
 
 private:
-  enum class State
-  {
-    WAITING_FOR_GOAL,
-    ACTIVE
-  };
+  robot::PlannerCore planning_core_;
+  PlannerState state_ = PlannerState::AWAITING_GOAL;
 
-  void mapCallback(const nav_msgs::msg::OccupancyGrid::SharedPtr msg);
-  void goalCallback(const geometry_msgs::msg::PointStamped::SharedPtr msg);
-  void odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg);
-  void timerCallback();
+  rclcpp::Subscription<nav_msgs::msg::OccupancyGrid>::SharedPtr map_subscription_;
+  rclcpp::Subscription<geometry_msgs::msg::PointStamped>::SharedPtr goal_subscription_;
+  rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odometry_subscription_;
+  rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr path_publisher_;
+  rclcpp::TimerBase::SharedPtr planning_timer_;
 
-  bool atGoal() const;
-  void planAndPublish();
+  nav_msgs::msg::OccupancyGrid current_map_;
+  geometry_msgs::msg::PointStamped goal_;
+  geometry_msgs::msg::Pose robot_pose_;
+  bool goal_set_ = false;
 
-  robot::PlannerCore planner_;
+  const std::string FRAME_ID = "sim_world";
 
-  rclcpp::Subscription<nav_msgs::msg::OccupancyGrid>::SharedPtr mapSub;
-  rclcpp::Subscription<geometry_msgs::msg::PointStamped>::SharedPtr goalSub;
-  rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odomSub;
+  CellIndex mapToCell(const geometry_msgs::msg::Point &point);
+  geometry_msgs::msg::Point cellToWorld(const CellIndex &cell);
+  std::vector<CellIndex> findNeighbors(const CellIndex &current);
+  std::vector<geometry_msgs::msg::PoseStamped> retracePath(const AStarNode &goal_node);
+  double cellCost(const CellIndex &cell);
 
-  rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr pathPublisher;
-  rclcpp::TimerBase::SharedPtr planningTimer;
-
-  nav_msgs::msg::OccupancyGrid latest_map_;
-  nav_msgs::msg::Odometry latest_odom_;
-  geometry_msgs::msg::PointStamped latest_goal_;
-
-  bool map_received_;
-  bool odom_received_;
-  bool goal_received_;
-
-  bool map_updated_;
-  bool goal_updated_;
-
-  State state_;
-
-  double goal_tolerance_m_;
-  double replan_distance_m_;
-
-  bool have_last_plan_start_;
-  double last_plan_start_x_;
-  double last_plan_start_y_;
+  int OBSTACLE_THRESHOLD = 15;
+  std::unordered_map<CellIndex, AStarNode, CellIndexHash> node_registry_;
 };
 
 #endif

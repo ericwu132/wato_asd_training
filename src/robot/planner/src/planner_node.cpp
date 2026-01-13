@@ -1,149 +1,240 @@
 #include "planner_node.hpp"
 
-#include <cmath>
+#include <algorithm>
+#include <unordered_set>
 
 PlannerNode::PlannerNode()
 : Node("planner"),
-  planner_(robot::PlannerCore(this->get_logger())),
-  map_received_(false),
-  odom_received_(false),
-  goal_received_(false),
-  map_updated_(false),
-  goal_updated_(false),
-  state_(State::WAITING_FOR_GOAL),
-  goal_tolerance_m_(0.25),
-  replan_distance_m_(0.50),
-  have_last_plan_start_(false),
-  last_plan_start_x_(0.0),
-  last_plan_start_y_(0.0)
+  planning_core_(robot::PlannerCore(this->get_logger())),
+  state_(PlannerState::AWAITING_GOAL)
 {
-  mapSub = this->create_subscription<nav_msgs::msg::OccupancyGrid>(
-    "/map",
-    10,
-    std::bind(&PlannerNode::mapCallback, this, std::placeholders::_1)
-  );
+  map_subscription_ = this->create_subscription<nav_msgs::msg::OccupancyGrid>(
+    "/map", 10, std::bind(&PlannerNode::handleMapUpdate, this, std::placeholders::_1));
 
-  goalSub = this->create_subscription<geometry_msgs::msg::PointStamped>(
-    "/goal_point",
-    10,
-    std::bind(&PlannerNode::goalCallback, this, std::placeholders::_1)
-  );
+  goal_subscription_ = this->create_subscription<geometry_msgs::msg::PointStamped>(
+    "/goal_point", 10, std::bind(&PlannerNode::handleGoalUpdate, this, std::placeholders::_1));
 
-  odomSub = this->create_subscription<nav_msgs::msg::Odometry>(
-    "/odom/filtered",
-    10,
-    std::bind(&PlannerNode::odomCallback, this, std::placeholders::_1)
-  );
+  odometry_subscription_ = this->create_subscription<nav_msgs::msg::Odometry>(
+    "/odom/filtered", 10, std::bind(&PlannerNode::handleOdometryUpdate, this, std::placeholders::_1));
 
-  pathPublisher = this->create_publisher<nav_msgs::msg::Path>("/path", 10);
+  path_publisher_ = this->create_publisher<nav_msgs::msg::Path>("/path", 10);
 
-  planningTimer = this->create_wall_timer(
-    std::chrono::milliseconds(500),
-    std::bind(&PlannerNode::timerCallback, this)
-  );
+  planning_timer_ = this->create_wall_timer(
+    std::chrono::milliseconds(1500), std::bind(&PlannerNode::onTimerEvent, this));
 }
 
-void PlannerNode::mapCallback(const nav_msgs::msg::OccupancyGrid::SharedPtr msg)
+void PlannerNode::handleMapUpdate(const nav_msgs::msg::OccupancyGrid::SharedPtr msg)
 {
-  latest_map_ = *msg;
-  map_received_ = true;
-  map_updated_ = true;
-}
+  current_map_ = *msg;
 
-void PlannerNode::goalCallback(const geometry_msgs::msg::PointStamped::SharedPtr msg)
-{
-  latest_goal_ = *msg;
-  goal_received_ = true;
-  goal_updated_ = true;
-  if (state_ == State::WAITING_FOR_GOAL) state_ = State::ACTIVE;
-}
-
-void PlannerNode::odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg)
-{
-  latest_odom_ = *msg;
-  odom_received_ = true;
-}
-
-bool PlannerNode::atGoal() const
-{
-  if (!goal_received_ || !odom_received_) return false;
-
-  const double dx = latest_goal_.point.x - latest_odom_.pose.pose.position.x;
-  const double dy = latest_goal_.point.y - latest_odom_.pose.pose.position.y;
-  const double d = std::sqrt(dx * dx + dy * dy);
-  return d <= goal_tolerance_m_;
-}
-
-void PlannerNode::planAndPublish()
-{
-  if (!map_received_ || !odom_received_ || !goal_received_) return;
-
-  auto planned = planner_.plan(latest_map_, latest_odom_, latest_goal_);
-  if (!planned.has_value())
+  if (goal_set_)
   {
-    RCLCPP_WARN(this->get_logger(), "No valid path found");
-    map_updated_ = false;
-    goal_updated_ = false;
-    return;
-  }
+    CellIndex goal_cell = mapToCell(goal_.point);
 
-  nav_msgs::msg::Path path = planned.value();
-  path.header.stamp = this->now();
-  for (auto& ps : path.poses) ps.header.stamp = path.header.stamp;
-
-  pathPublisher->publish(path);
-
-  last_plan_start_x_ = latest_odom_.pose.pose.position.x;
-  last_plan_start_y_ = latest_odom_.pose.pose.position.y;
-  have_last_plan_start_ = true;
-
-  map_updated_ = false;
-  goal_updated_ = false;
-}
-
-void PlannerNode::timerCallback()
-{
-  if (!map_received_ || !odom_received_) return;
-
-  if (state_ == State::WAITING_FOR_GOAL)
-  {
-    if (!goal_received_) return;
-    state_ = State::ACTIVE;
-  }
-
-  if (!goal_received_) return;
-
-  if (atGoal())
-  {
-    state_ = State::WAITING_FOR_GOAL;
-    goal_received_ = false;
-    goal_updated_ = false;
-    have_last_plan_start_ = false;
-    return;
-  }
-
-  bool need_replan = false;
-
-  if (goal_updated_ || map_updated_) need_replan = true;
-
-  if (!need_replan)
-  {
-    if (!have_last_plan_start_)
+    if (goal_cell.x < 0 || goal_cell.x >= static_cast<int>(current_map_.info.width) ||
+        goal_cell.y < 0 || goal_cell.y >= static_cast<int>(current_map_.info.height) ||
+        cellCost(goal_cell) >= OBSTACLE_THRESHOLD)
     {
-      need_replan = true;
-    }
-    else
-    {
-      const double cx = latest_odom_.pose.pose.position.x;
-      const double cy = latest_odom_.pose.pose.position.y;
-      const double dx = cx - last_plan_start_x_;
-      const double dy = cy - last_plan_start_y_;
-      const double d = std::sqrt(dx * dx + dy * dy);
-      if (d >= replan_distance_m_) need_replan = true;
+      state_ = PlannerState::AWAITING_GOAL;
+      goal_set_ = false;
+      publishEmptyPath();
+      return;
     }
   }
 
-  if (need_replan) planAndPublish();
+  if (state_ == PlannerState::PLANNING_PATH) computePath();
+}
+
+void PlannerNode::handleGoalUpdate(const geometry_msgs::msg::PointStamped::SharedPtr msg)
+{
+  goal_ = *msg;
+  goal_set_ = true;
+  state_ = PlannerState::PLANNING_PATH;
+  computePath();
+}
+
+void PlannerNode::handleOdometryUpdate(const nav_msgs::msg::Odometry::SharedPtr msg)
+{
+  robot_pose_ = msg->pose.pose;
+}
+
+void PlannerNode::onTimerEvent()
+{
+  if (state_ != PlannerState::PLANNING_PATH) return;
+
+  if (hasGoalBeenReached())
+  {
+    state_ = PlannerState::AWAITING_GOAL;
+    goal_set_ = false;
+    publishEmptyPath();
+    return;
+  }
+
+  computePath();
+}
+
+bool PlannerNode::hasGoalBeenReached()
+{
+  double dx = goal_.point.x - robot_pose_.position.x;
+  double dy = goal_.point.y - robot_pose_.position.y;
+  return std::sqrt(dx * dx + dy * dy) < 0.2;
+}
+
+void PlannerNode::computePath()
+{
+  if (!goal_set_ || current_map_.data.empty()) return;
+
+  std::priority_queue<AStarNode, std::vector<AStarNode>, CompareF> open_list;
+  std::unordered_set<CellIndex, CellIndexHash> closed_list;
+
+  node_registry_.clear();
+
+  CellIndex start = mapToCell(robot_pose_.position);
+  CellIndex target = mapToCell(goal_.point);
+
+  double dx = static_cast<double>(start.x - target.x);
+  double dy = static_cast<double>(start.y - target.y);
+  double start_heuristic = std::sqrt(dx * dx + dy * dy);
+
+  AStarNode start_node(start, start_heuristic, 0.0, start_heuristic, start);
+  open_list.push(start_node);
+  node_registry_[start] = start_node;
+
+  while (!open_list.empty())
+  {
+    AStarNode current = open_list.top();
+    open_list.pop();
+
+    if (closed_list.count(current.index)) continue;
+
+    if (current.index == target)
+    {
+      publishPath(retracePath(current));
+      return;
+    }
+
+    closed_list.insert(current.index);
+
+    for (const auto& neighbor : findNeighbors(current.index))
+    {
+      if (closed_list.count(neighbor)) continue;
+
+      double cost_to_move = movementCost(current.index, neighbor);
+      double tentative_g = current.g_score + cost_to_move;
+
+      auto registry_entry = node_registry_.find(neighbor);
+
+      if (registry_entry == node_registry_.end() || tentative_g < registry_entry->second.g_score)
+      {
+        double ndx = static_cast<double>(neighbor.x - target.x);
+        double ndy = static_cast<double>(neighbor.y - target.y);
+        double neighbor_heuristic = std::sqrt(ndx * ndx + ndy * ndy);
+
+        AStarNode neighbor_node(neighbor, tentative_g + neighbor_heuristic, tentative_g, neighbor_heuristic, current.index);
+        node_registry_[neighbor] = neighbor_node;
+        open_list.push(neighbor_node);
+      }
+    }
+  }
+
+  publishEmptyPath();
+}
+
+std::vector<CellIndex> PlannerNode::findNeighbors(const CellIndex& current)
+{
+  static const std::vector<std::pair<int, int>> offsets = {
+    {-1, -1}, {0, -1}, {1, -1},
+    {-1,  0},          {1,  0},
+    {-1,  1}, {0,  1}, {1,  1}
+  };
+
+  std::vector<CellIndex> neighbors;
+  neighbors.reserve(8);
+
+  for (const auto& offset : offsets)
+  {
+    int nx = current.x + offset.first;
+    int ny = current.y + offset.second;
+
+    if (nx >= 0 && nx < static_cast<int>(current_map_.info.width) &&
+        ny >= 0 && ny < static_cast<int>(current_map_.info.height) &&
+        cellCost(CellIndex(nx, ny)) < OBSTACLE_THRESHOLD)
+    {
+      neighbors.emplace_back(nx, ny);
+    }
+  }
+
+  return neighbors;
+}
+
+double PlannerNode::cellCost(const CellIndex& cell)
+{
+  int index = cell.y * static_cast<int>(current_map_.info.width) + cell.x;
+  return static_cast<double>(current_map_.data.at(static_cast<size_t>(index)));
+}
+
+CellIndex PlannerNode::mapToCell(const geometry_msgs::msg::Point& point)
+{
+  int x = static_cast<int>((point.x - current_map_.info.origin.position.x) / current_map_.info.resolution);
+  int y = static_cast<int>((point.y - current_map_.info.origin.position.y) / current_map_.info.resolution);
+  return CellIndex(x, y);
+}
+
+std::vector<geometry_msgs::msg::PoseStamped> PlannerNode::retracePath(const AStarNode& goal_node)
+{
+  std::vector<geometry_msgs::msg::PoseStamped> path;
+
+  AStarNode current = goal_node;
+
+  while (!(current.index == current.parent))
+  {
+    path.insert(path.begin(), createPose(current.index));
+    current = node_registry_[current.parent];
+  }
+
+  path.insert(path.begin(), createPose(current.index));
+  return path;
+}
+
+geometry_msgs::msg::PoseStamped PlannerNode::createPose(const CellIndex& index)
+{
+  geometry_msgs::msg::PoseStamped pose;
+  pose.header.frame_id = FRAME_ID;
+  pose.header.stamp = this->get_clock()->now();
+  pose.pose.position = cellToWorld(index);
+  pose.pose.orientation.w = 1.0;
+  return pose;
+}
+
+geometry_msgs::msg::Point PlannerNode::cellToWorld(const CellIndex& cell)
+{
+  geometry_msgs::msg::Point point;
+  point.x = cell.x * current_map_.info.resolution + current_map_.info.origin.position.x;
+  point.y = cell.y * current_map_.info.resolution + current_map_.info.origin.position.y;
+  point.z = 0.0;
+  return point;
+}
+
+void PlannerNode::publishPath(const std::vector<geometry_msgs::msg::PoseStamped>& path)
+{
+  nav_msgs::msg::Path msg;
+  msg.header.stamp = this->get_clock()->now();
+  msg.header.frame_id = FRAME_ID;
+  msg.poses = path;
+  path_publisher_->publish(msg);
+}
+
+void PlannerNode::publishEmptyPath()
+{
+  nav_msgs::msg::Path empty_path;
+  empty_path.header.stamp = this->get_clock()->now();
+  empty_path.header.frame_id = FRAME_ID;
+  path_publisher_->publish(empty_path);
+}
+
+double PlannerNode::movementCost(const CellIndex& current, const CellIndex& neighbor)
+{
+  return (std::abs(current.x - neighbor.x) == 1 && std::abs(current.y - neighbor.y) == 1) ? std::sqrt(2.0) : 1.0;
 }
 
 int main(int argc, char** argv)
