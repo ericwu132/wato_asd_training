@@ -1,71 +1,91 @@
 #include "map_memory_node.hpp"
-#include "nav_msgs/msg/odometry.hpp"
-#include "nav_msgs/msg/occupancy_grid.hpp"
-#include <cmath> //for sqrt, pow
 
+#include <cmath>
 #include <functional>
 
 using std::placeholders::_1;
-using namespace std;
-//publishers and subscribers
-MapMemoryNode::MapMemoryNode() : Node("map_memory"), map_memory_(robot::MapMemoryCore(this->get_logger())) 
+
+static double yawFromQuaternion(double x, double y, double z, double w)
 {
-  RCLCPP_INFO(this->get_logger(), "Map Memory node started");
-
-  //publish to a map topic
-  map_memory_pub_ = this->create_publisher<nav_msgs::msg::OccupancyGrid>("/map", 10);
-  //subscribe to /costmap topic for nav_msg::msg::OccupancyGrid messages
-  costmap_sub_ = this->create_subscription<nav_msgs::msg::OccupancyGrid>("/costmap", rclcpp::SensorDataQoS(), 
-  bind(&MapMemoryNode::topic_callback, this, _1)
-  );
-  //subscribe to /odom/filtered topic for nav_msg::msg::Odometry messages
-  odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>("/odom/filtered", rclcpp::SensorDataQoS(), 
-  bind(&MapMemoryNode::topic_callback, this, _1)
-  );
-
-  //timer to limit update rate
-  timer_ = this->create_wall_timer(std::chrono::milliseconds(100), std::bind(&MapMemoryNode::timer_callback, this));
+  return std::atan2(2.0 * (w * z + x * y),
+                    1.0 - 2.0 * (y * y + z * z));
 }
 
-void MapMemoryNode::timer_callback()
+MapMemoryNode::MapMemoryNode()
+: Node("map_memory"),
+  core_(robot::MapMemoryCore(this->get_logger()))
 {
-  //call map memory core to get the current map
-  nav_msgs::msg::OccupancyGrid map = map_memory_.get_map();
+  map_pub_ = this->create_publisher<nav_msgs::msg::OccupancyGrid>("/map", 10);
 
-  //publish map
-  map_memory_pub_->publish(map);
+  costmap_sub_ = this->create_subscription<nav_msgs::msg::OccupancyGrid>(
+    "/costmap",
+    rclcpp::SensorDataQoS(),
+    std::bind(&MapMemoryNode::costmapCallback, this, _1)
+  );
 
+  odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
+    "/odom/filtered",
+    rclcpp::SensorDataQoS(),
+    std::bind(&MapMemoryNode::odomCallback, this, _1)
+  );
+
+  timer_ = this->create_wall_timer(
+    std::chrono::seconds(1),
+    std::bind(&MapMemoryNode::timerCallback, this)
+  );
 }
 
-//why does chat and ros always call things callback
+void MapMemoryNode::costmapCallback(const nav_msgs::msg::OccupancyGrid::SharedPtr msg)
+{
+  latest_costmap_ = *msg;
+  have_costmap_ = true;
+
+  if (!core_.isInitialized()) {
+    core_.initializeFromCostmap(latest_costmap_);
+  }
+}
 
 void MapMemoryNode::odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg)
 {
-  double current_x = msg->pose.pose.position.x;
-  double current_y = msg->pose.pose.position.y;
+  cur_x_ = msg->pose.pose.position.x;
+  cur_y_ = msg->pose.pose.position.y;
 
-  if (!initialized_)
-  {
-    initial_pose_x_ = current_x;
-    initial_pose_y_ = current_y;
-    last_pose_x_ = current_x;
-    last_pose_y_ = current_y;
-    initialized_ = true;
-    
-    RCLCPP_INFO(this->get_logger(), "initialized robot pos at (%.2f, %.2f)", initial_pose_x_, initial_pose_y_);
+  const auto & q = msg->pose.pose.orientation;
+  cur_yaw_ = yawFromQuaternion(q.x, q.y, q.z, q.w);
 
+  have_odom_ = true;
+
+  if (!initialized_motion_) {
+    last_update_x_ = cur_x_;
+    last_update_y_ = cur_y_;
+    initialized_motion_ = true;
+    moved_enough_ = false;
+    return;
   }
 
-  double dx = current_x - last_pose_x_;
-  double dy = current_y - last_pose_y_;
+  const double dx = cur_x_ - last_update_x_;
+  const double dy = cur_y_ - last_update_y_;
+  const double dist = std::sqrt(dx * dx + dy * dy);
 
-  double distance = sqrt(pow(dx, 2) + pow(dy, 2));
+  if (dist >= 1.5) {
+    moved_enough_ = true;
+  }
+}
 
-  if (distance >= 1.5)
-  {
-    map_memory_.update_pose(dx, dy);
-    last_pose_x_ = current_x;
-    last_pose_y_ = current_y;
+void MapMemoryNode::timerCallback()
+{
+  if (have_odom_ && have_costmap_ && moved_enough_ && core_.isInitialized()) {
+    core_.integrateCostmap(latest_costmap_, cur_x_, cur_y_, cur_yaw_);
+    last_update_x_ = cur_x_;
+    last_update_y_ = cur_y_;
+    moved_enough_ = false;
+  }
+
+  if (core_.isInitialized()) {
+    auto msg = core_.getMap();
+    msg.header.stamp = this->now();
+    msg.header.frame_id = "sim_world";
+    map_pub_->publish(msg);
   }
 }
 

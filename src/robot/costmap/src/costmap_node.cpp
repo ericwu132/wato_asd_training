@@ -22,15 +22,15 @@ CostmapNode::CostmapNode():Node("costmap"), costmap_(robot::CostmapCore(this->ge
 {
   RCLCPP_INFO(this->get_logger(), "Costmap node started");
 
-  // publish to foxglove
+  // ublish to foxglove
   costmap_pub_ = this->create_publisher<nav_msgs::msg::OccupancyGrid>("/costmap", 10);
 
-  // subscribe to lidar information
+  //subscribe to lidar information
   lidar_sub_ = this->create_subscription<sensor_msgs::msg::LaserScan>("/lidar",rclcpp::SensorDataQoS(), 
   bind(&CostmapNode::topic_callback, this, _1)
   );
 
-  // Allocate grid once
+  //allocate grid once
   grid_.assign(WIDTH * HEIGHT, 0);
 }
 
@@ -90,7 +90,7 @@ static void inflate_obstacles(vector<int8_t>& costmap, double inflation_radius_m
           {
             continue;
           }
-          
+
           // cost = max_cost * (1 - dist / radius)
           const double raw = static_cast<double>(max_cost) * (1.0 - (dist_m / inflation_radius_m));
           const int8_t cost = static_cast<int8_t>(round(max(0.0, raw)));
